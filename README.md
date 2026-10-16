@@ -9,7 +9,7 @@ ril.submit({ skill: "pick_place", object: "part_1", from: "station_a", to: "stat
 
 and never names an OEM. Real URDFs and meshes from the official ROS 2 description repos; simulated ROS 2 drivers using each vendor's real endpoint names and status vocabulary.
 
-**Live demo:** `https://<username>.github.io/ril-demo/` (after enabling Pages, below)
+**Live demo:** `https://manomitbal.github.io/robot-intergration-layer/` (after enabling Pages, below)
 
 ## Layout
 
