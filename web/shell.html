@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>IAC Robot Integration Layer — multi-OEM demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #e7eae8; --stage: #d6dbd9; --panel: #ffffff; --ink: #17212b; --muted: #5a6772; --line: #cbd2d5;
+  --active: #2457a6; --active-bg: #e3ebf8; --ok: #2b7a4b; --ok-bg: #e2f1e8; --warn: #8a6400; --warn-bg: #fbefc4;
+  --err: #b3261e; --err-bg: #f9e1df; --code: #f1f3f2; --hazard: #f2c230;
+  --sans: "Barlow", "Helvetica Neue", Arial, sans-serif; --cond: "Barlow Semi Condensed", "Barlow", "Arial Narrow", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+  box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171c; --stage: #0d1216; --panel: #1a2128; --ink: #e5e9ec; --muted: #94a0aa; --line: #2c3640;
+    --active: #7ea6ec; --active-bg: #1d2a40; --ok: #62c48b; --ok-bg: #16301f; --warn: #f2c230; --warn-bg: #3a3012;
+    --err: #f07a6e; --err-bg: #3d1a17; --code: #141a1f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171c; --stage: #0d1216; --panel: #1a2128; --ink: #e5e9ec; --muted: #94a0aa; --line: #2c3640;
+  --active: #7ea6ec; --active-bg: #1d2a40; --ok: #62c48b; --ok-bg: #16301f; --warn: #f2c230; --warn-bg: #3a3012;
+  --err: #f07a6e; --err-bg: #3d1a17; --code: #141a1f; color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 15px/1.45 var(--sans); }
+button, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--active); outline-offset: 2px; }
+
+.top { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; padding: 18px 24px 14px; border-bottom: 4px solid var(--hazard); background: var(--panel); }
+.top h1 { margin: 0; font: 600 26px/1.1 var(--cond); letter-spacing: 0.01em; }
+.top p { margin: 0; color: var(--muted); }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 390px; grid-template-areas: "stage side" "logs side" "anatomy side"; gap: 16px; padding: 16px 24px 32px; max-width: 1600px; margin: 0 auto; }
+.stage { grid-area: stage; }
+.side { grid-area: side; display: flex; flex-direction: column; gap: 14px; }
+.logs { grid-area: logs; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.anatomy { grid-area: anatomy; }
+@media (max-width: 1000px) {
+  .layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "stage" "side" "logs" "anatomy"; padding: 12px; }
+  .logs { grid-template-columns: minmax(0, 1fr); }
+}
+
+#view { position: relative; height: min(62vh, 620px); min-height: 340px; background: var(--stage); border-radius: 6px; overflow: hidden; }
+#view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#labels { position: absolute; inset: 0; pointer-events: none; }
+.tag { position: absolute; left: 0; top: 0; display: flex; gap: 8px; align-items: center; padding: 4px 8px 4px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; white-space: nowrap; font-size: 13px; }
+.tag-name { font-weight: 600; }
+.tag.station { padding: 2px 6px; font-size: 12px; color: var(--muted); background: transparent; border: none; }
+#narration { margin: 10px 2px 0; min-height: 1.45em; font-size: 16px; }
+
+.block { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px 16px; }
+.block h2, .logs h2, .anatomy h2 { margin: 0 0 10px; font: 600 17px/1.2 var(--cond); }
+.hint { margin: -6px 0 10px; color: var(--muted); font-size: 13.5px; }
+
+.seg { display: grid; grid-template-columns: 0.7fr 1.15fr 1fr; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin-bottom: 10px; }
+.seg button { border: 0; background: transparent; padding: 8px 6px; cursor: pointer; font-weight: 500; font-size: 14px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--active); color: #fff; }
+label.dir { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; color: var(--muted); font-size: 14px; }
+select { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; }
+pre#code { margin: 0 0 12px; padding: 10px 12px; background: var(--code); border-left: 3px solid var(--active); border-radius: 3px; font: 12.5px/1.5 var(--mono); overflow-x: auto; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+button.primary { background: var(--active); color: #fff; border: 0; border-radius: 4px; padding: 9px 16px; font-weight: 600; cursor: pointer; }
+button.ghost { background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 13.5px; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.scen { display: grid; gap: 8px; }
+.scen button { text-align: left; background: transparent; border: 1px solid var(--line); border-radius: 5px; padding: 9px 12px; cursor: pointer; }
+.scen button:hover:not(:disabled) { border-color: var(--active); }
+.scen b { display: block; font-weight: 600; }
+.scen span { color: var(--muted); font-size: 13.5px; }
+
+.task-title { margin: 0 0 8px; font-weight: 600; }
+.task-title.ok { color: var(--ok); } .task-title.err { color: var(--err); } .task-title.warn { color: var(--warn); } .task-title.active { color: var(--active); }
+#steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; counter-reset: s; }
+#steps li { counter-increment: s; font-size: 12.5px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
+#steps li::before { content: counter(s) " "; opacity: 0.6; }
+#steps li.done { color: var(--ok); border-color: transparent; background: var(--ok-bg); }
+#steps li.now { color: #fff; background: var(--active); border-color: var(--active); }
+#operator { margin-top: 12px; padding: 10px 12px; background: var(--err-bg); border-left: 4px solid var(--err); border-radius: 3px; }
+#operator p { margin: 0 0 8px; }
+
+#robots { display: grid; gap: 10px; }
+.robot { border: 1px solid var(--line); border-radius: 5px; padding: 10px 12px; }
+.robot header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.robot h3 { margin: 0; font: 600 15.5px/1.2 var(--sans); }
+.robot .sub { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+.robot .detail { margin: 6px 0; font-size: 13.5px; color: var(--muted); }
+.robot .detail.warn { color: var(--warn); } .robot .detail.err { color: var(--err); }
+.robot dl { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 12px; margin: 0 0 10px; font-size: 12.5px; }
+.robot dt { color: var(--muted); } .robot dd { margin: 0; font-variant-numeric: tabular-nums; }
+.pill { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; padding: 2px 7px; border-radius: 3px; background: var(--line); color: var(--ink); }
+.pill.ok { background: var(--ok-bg); color: var(--ok); } .pill.active { background: var(--active-bg); color: var(--active); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); } .pill.err { background: var(--err); color: #fff; }
+
+.logs > div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; min-width: 0; }
+.logs ul { list-style: none; margin: 0; padding: 0; height: 290px; overflow: auto; font: 12px/1.5 var(--mono); }
+.logs li { display: grid; grid-template-columns: 74px auto 1fr; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.logs time { color: var(--muted); }
+#events .etype { color: var(--muted); }
+#events .lvl-warn .emsg { color: var(--warn); } #events .lvl-error .emsg { color: var(--err); }
+#trace li { grid-template-columns: 74px 58px 14px 1fr; }
+#trace .who { font-weight: 500; } #trace .oem-crx10ia .who { color: var(--warn); } #trace .oem-ur10e .who { color: var(--active); }
+#trace .line { word-break: break-all; }
+
+.anatomy { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; }
+.anatomy .bars { display: grid; gap: 6px; }
+.anatomy .bar { display: grid; grid-template-columns: 200px 1fr 64px; gap: 10px; align-items: center; font-size: 13.5px; }
+.anatomy .track { height: 12px; background: var(--code); border-radius: 2px; overflow: hidden; }
+.anatomy .fill { height: 100%; background: var(--muted); }
+.anatomy .bar.oem .fill { background: var(--hazard); }
+.anatomy .n { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+@media (max-width: 600px) { .anatomy .bar { grid-template-columns: 1fr 64px; } .anatomy .track { grid-column: 1 / -1; order: 3; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Robot Integration Layer</h1>
+  <p>Demo cell A: a FANUC and a Universal Robots arm behind one contract (v__VERSION__). Simulated ROS 2 drivers, real URDFs and meshes.</p>
+</header>
+<main class="layout">
+  <section class="stage" aria-label="Work cell">
+    <div id="view"><div id="labels"></div></div>
+    <p id="narration" role="status">Choose a robot and run the task, or play a scenario. Drag to orbit the cell.</p>
+  </section>
+
+  <aside class="side">
+    <section class="block">
+      <h2>Run a task</h2>
+      <div class="seg" role="group" aria-label="Robot">
+        <button data-robot="auto" aria-pressed="true">Auto</button>
+        <button data-robot="crx10ia" aria-pressed="false">FANUC CRX-10iA</button>
+        <button data-robot="ur10e" aria-pressed="false">UR10e</button>
+      </div>
+      <label class="dir">Move part_1
+        <select id="dir"><option value="ab">Station A to B</option><option value="ba">Station B to A</option></select>
+      </label>
+      <pre id="code" aria-label="Application call"></pre>
+      <div class="row"><button id="run" class="primary">Run task</button><button id="reset" class="ghost">Reset cell</button></div>
+    </section>
+
+    <section class="block">
+      <h2>Scenarios</h2>
+      <div class="scen">
+        <button data-scenario="pick"><b>Pick and place</b><span>Runs the task on the robot selected above.</span></button>
+        <button data-scenario="switch"><b>Task switching</b><span>Same task on FANUC, then on UR. Only the robot argument changes.</span></button>
+        <button data-scenario="failover"><b>Failure recovery</b><span>FANUC loses its link mid-approach; the platform fails over to UR.</span></button>
+      </div>
+    </section>
+
+    <section class="block" aria-live="polite">
+      <h2>Current task</h2>
+      <p id="task-title" class="task-title">No task yet</p>
+      <ol id="steps"></ol>
+      <div id="operator" hidden>
+        <p id="operator-msg"></p>
+        <div class="row"><button id="op-resume" class="primary">Resume task</button><button id="op-abort" class="ghost">Abort task</button></div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>Robots</h2>
+      <p class="hint">Inject faults to see how each is normalized.</p>
+      <div id="robots"></div>
+    </section>
+  </aside>
+
+  <section class="logs">
+    <div>
+      <h2>Platform events</h2>
+      <p class="hint">What orchestration sees: one vocabulary for every vendor.</p>
+      <ul id="events"></ul>
+    </div>
+    <div>
+      <h2>Adapter traffic</h2>
+      <p class="hint">What each adapter sends to its vendor's ROS 2 driver.</p>
+      <ul id="trace"></ul>
+    </div>
+  </section>
+
+  <section class="anatomy">
+    <h2>Where the code lives</h2>
+    <p class="hint">Lines of code in this prototype. Vendor-specific code is highlighted; adding a third arm means one more short adapter and a manifest.</p>
+    <div class="bars">__BARS__</div>
+  </section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>window.ROBOT_DATA = __DATA__;</script>
+<script>
+const RIL = {};
+__SRC__
+</script>
+</body>
+</html>
