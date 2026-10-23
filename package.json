@@ -1,8 +1,8 @@
 {
   "name": "ril-demo",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "IAC Robot Integration Layer prototype: FANUC CRX-10iA and UR10e behind one contract",
+  "description": "IAC Robot Integration Layer prototype: FANUC CRX-10iA, UR10e and Spot behind one contract",
   "scripts": {
     "build": "python3 tools/build.py",
     "test": "node test/scenarios.test.js",

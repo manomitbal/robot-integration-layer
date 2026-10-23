@@ -29,16 +29,30 @@ RIL.Platform = (() => {
     register({ manifest, urdf, adapter, site }) {
       const kin = new K.KinModel(this.parseXML(urdf), manifest.description.root_link);
       const baseT = K.fromXYZRPY(site.xyz, site.rpy);
-      const r = { id: manifest.id, manifest, kin, baseT, adapter, state: RS.CONNECTING, failure: null, detail: '', lastSeen: Date.now(), task: null, recoveries: [], watch: [] };
+      const r = { id: manifest.id, manifest, kin, baseT, site, adapter, state: RS.CONNECTING, failure: null, detail: '', lastSeen: Date.now(), task: null, recoveries: [], watch: [] };
       this.robots[r.id] = r;
-      adapter.connect().then(() => { r.state = RS.IDLE; this.audit.emit({ type: 'robot.registered', robot: r.id, msg: `${manifest.display} registered (${manifest.oem}, adapter ${manifest.adapter})` }); this._changed(); });
+      adapter.connect().then((c) => {
+        if (c && c.ok === false) { r.state = RS.FAULTED; r.failure = 'OEM_INTERNAL'; r.detail = `connect failed at ${c.failed}`; this.audit.emit({ type: 'robot.connect_failed', level: 'error', robot: r.id, msg: `${r.id} handshake failed at ${c.failed}` }); }
+        else { r.state = RS.IDLE; this.audit.emit({ type: 'robot.registered', robot: r.id, msg: `${manifest.display} registered (${manifest.oem}, adapter ${manifest.adapter})` }); }
+        this._changed();
+      });
       return r;
+    }
+
+    // Live world transform of a robot's root link. Fixed robots use the site
+    // pose; mobile robots follow the adapter's odometry.
+    baseT(robotId) {
+      const r = this.robots[robotId], mob = r.manifest.mobility;
+      if (!mob) return r.baseT;
+      const b = r.adapter.basePose();
+      return K.fromXYZRPY([b.x, b.y, mob.body_height_m], [0, 0, b.yaw]);
     }
 
     // ---- health & liveness ------------------------------------------------
     _healthTick() {
       const now = Date.now();
       Object.values(this.robots).forEach(r => {
+        if (r.state === RS.CONNECTING) return;   // adapter is mid-handshake (e.g. lease, power-on)
         const h = r.adapter.health();
         if (h.alive) {
           if (r.state === RS.OFFLINE) this.audit.emit({ type: 'robot.reconnected', robot: r.id, msg: `${r.id} heartbeat restored` });
@@ -66,29 +80,46 @@ RIL.Platform = (() => {
       const req = C.Skills[spec.skill];
       if (!req) return { ok: false, failure: 'UNSUPPORTED', reason: `unknown skill ${spec.skill}` };
       if (!m.skills.includes(spec.skill)) return { ok: false, failure: 'UNSUPPORTED', reason: `${m.id} does not declare ${spec.skill}` };
-      if (!m.tools.some(t => t.type === req.requires.tool)) return { ok: false, failure: 'UNSUPPORTED', reason: `no ${req.requires.tool}` };
+      if (!m.tools.some(t => req.requires.tool.includes(t.type))) return { ok: false, failure: 'UNSUPPORTED', reason: `no ${req.requires.tool.join(' / ')}` };
       const obj = w.objects[spec.object];
       if (obj.mass_kg > m.limits.payload_kg) return { ok: false, failure: 'PAYLOAD_EXCEEDED', reason: `${obj.mass_kg} kg > ${m.limits.payload_kg} kg` };
       const src = obj.pos.slice(), dst = w.stations[spec.to].slice();
       dst[2] = src[2];
-      const tool = m.tool_frame, down = [0, 0, -1];
+      const tool = m.tool_frame, down = [0, 0, -1], mob = m.mobility;
       const poses = [
+        ...(mob ? [{ name: 'walk_to_pick', nav: src }] : []),
         { name: 'approach', p: [src[0], src[1], src[2] + HOVER_M] },
         { name: 'descend', p: src },
         { name: 'grasp', gripper: true },
         { name: 'lift', p: [src[0], src[1], src[2] + HOVER_M] },
+        ...(mob ? [{ name: 'walk_to_place', nav: dst }] : []),
         { name: 'transfer', p: [dst[0], dst[1], dst[2] + HOVER_M] },
         { name: 'place', p: dst },
         { name: 'release', gripper: false },
         { name: 'retreat', p: [dst[0], dst[1], dst[2] + HOVER_M] },
         { name: 'home', q: m.home },
+        ...(mob ? [{ name: 'return_to_dock', dock: true }] : []),
       ];
+      // Mobile: each arm pose is solved from the stand pose the base will be at by then.
+      let base = mob && r.adapter.basePose(), baseT = mob ? null : r.baseT;
+      const setBase = (b) => { base = b; baseT = K.fromXYZRPY([b.x, b.y, mob.body_height_m], [0, 0, b.yaw]); };
+      if (mob) setBase(base);
       let q = r.adapter.jointState();
       const steps = [];
       for (const s of poses) {
         if (s.gripper !== undefined) { steps.push({ name: s.name, kind: 'gripper', close: s.gripper }); continue; }
         if (s.q) { q = Object.assign({}, s.q); steps.push({ name: s.name, kind: 'move_joints', q }); continue; }
-        const sol = K.solveIK(r.kin, tool, Object.assign({}, m.home, q), { p: s.p, approach: down }, r.baseT);
+        if (s.nav || s.dock) {
+          let pose;
+          if (s.dock) pose = { x: r.site.xyz[0], y: r.site.xyz[1], yaw: r.site.rpy[2] };
+          else {
+            // Stand standoff_m short of the target on the line from where the base is now, facing it.
+            const dx = s.nav[0] - base.x, dy = s.nav[1] - base.y, d = Math.hypot(dx, dy) || 1;
+            pose = { x: s.nav[0] - dx / d * mob.standoff_m, y: s.nav[1] - dy / d * mob.standoff_m, yaw: Math.atan2(dy, dx) };
+          }
+          setBase(pose); steps.push({ name: s.name, kind: 'navigate', pose }); continue;
+        }
+        const sol = K.solveIK(r.kin, tool, Object.assign({}, m.home, q), { p: s.p, approach: down }, baseT);
         if (!sol.ok) return { ok: false, failure: 'UNREACHABLE', reason: `${s.name} at [${s.p.map(v => v.toFixed(2))}] outside workspace` };
         q = sol.q; steps.push({ name: s.name, kind: 'move_pose', q, p: s.p });
       }
@@ -163,6 +194,7 @@ RIL.Platform = (() => {
         r.watch.push(wd);
         if (r.state === RS.OFFLINE) return wd('CONNECTIVITY');
         if (s.kind === 'gripper') r.adapter.gripper(s.close).then(done);
+        else if (s.kind === 'navigate') r.adapter.navigate(s.pose).then(done);
         else r.adapter.followJointTrajectory(this._trajectory(r, s.q)).then(done);
       });
     }
@@ -220,7 +252,7 @@ RIL.Platform = (() => {
     // robot will work in. Real deployments add zone interlocks via Traffic &
     // Resource Management; this is the minimum the RIL itself must check.
     _clearance(r, spec) {
-      const T = r.kin.fk(r.adapter.jointState(), r.baseT)[r.manifest.tool_frame.link];
+      const T = r.kin.fk(r.adapter.jointState(), this.baseT(r.id))[r.manifest.tool_frame.link];
       const tcp = K.apply(T, r.manifest.tool_frame.offset);
       let worst = { ok: true, d: Infinity };
       [spec.from, spec.to].forEach(st => {

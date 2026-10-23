@@ -3,7 +3,7 @@
 // depend on. Versioned; no OEM names, controller names, or vendor codes.
 // ---------------------------------------------------------------------------
 RIL.Contract = Object.freeze({
-  VERSION: '0.3.0',
+  VERSION: '0.4.0',
 
   RobotState: Object.freeze({
     OFFLINE: 'OFFLINE', CONNECTING: 'CONNECTING', IDLE: 'IDLE', LEASED: 'LEASED',
@@ -29,12 +29,12 @@ RIL.Contract = Object.freeze({
 
   // Tier 1: skills. Orchestration submits these.
   Skills: Object.freeze({
-    pick_place: { params: ['object', 'from', 'to'], requires: { kind: 'arm', tool: 'parallel_gripper' } },
+    pick_place: { params: ['object', 'from', 'to'], requires: { kind: ['arm', 'mobile_manipulator'], tool: ['parallel_gripper', 'claw_gripper'] } },
   }),
 
   // Tier 2: motion primitives. Gated behind a lease + privileged role in
   // production; the platform composes skills out of these.
-  Primitives: Object.freeze(['move_joints', 'move_pose', 'gripper', 'set_io']),
+  Primitives: Object.freeze(['move_joints', 'move_pose', 'gripper', 'set_io', 'navigate']),
 });
 
 /* Adapter interface (what every OEM plugin implements). Everything else is
@@ -48,4 +48,8 @@ RIL.Contract = Object.freeze({
  *   cancel()                     -> void
  *   recover(failureCode)         -> Promise<{ ok }>
  *   jointState()                 -> {name: rad}
+ *
+ * Mobile robots (manifest.mobility present) additionally implement:
+ *   basePose()                   -> { x, y, yaw }   (site frame, m / rad)
+ *   navigate(pose)               -> Promise<{ ok, failure?, oem? }>
  */

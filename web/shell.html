@@ -61,7 +61,7 @@ button, select { font: inherit; color: inherit; }
 .block h2, .logs h2, .anatomy h2 { margin: 0 0 10px; font: 600 17px/1.2 var(--cond); }
 .hint { margin: -6px 0 10px; color: var(--muted); font-size: 13.5px; }
 
-.seg { display: grid; grid-template-columns: 0.7fr 1.15fr 1fr; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin-bottom: 10px; }
+.seg { display: grid; grid-template-columns: 0.7fr 1.15fr 0.9fr 0.8fr; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin-bottom: 10px; }
 .seg button { border: 0; background: transparent; padding: 8px 6px; cursor: pointer; font-weight: 500; font-size: 14px; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button[aria-pressed="true"] { background: var(--active); color: #fff; }
@@ -109,7 +109,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 #events .etype { color: var(--muted); }
 #events .lvl-warn .emsg { color: var(--warn); } #events .lvl-error .emsg { color: var(--err); }
 #trace li { grid-template-columns: 74px 58px 14px 1fr; }
-#trace .who { font-weight: 500; } #trace .oem-crx10ia .who { color: var(--warn); } #trace .oem-ur10e .who { color: var(--active); }
+#trace .who { font-weight: 500; } #trace .oem-crx10ia .who { color: var(--warn); } #trace .oem-ur10e .who { color: var(--active); } #trace .oem-spot .who { color: var(--ok); }
 #trace .line { word-break: break-all; }
 
 .anatomy { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; }
@@ -126,7 +126,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 <body>
 <header class="top">
   <h1>Robot Integration Layer</h1>
-  <p>Demo cell A: a FANUC and a Universal Robots arm behind one contract (v__VERSION__). Simulated ROS 2 drivers, real URDFs and meshes.</p>
+  <p>Demo cell A: a FANUC arm, a Universal Robots arm and a Boston Dynamics Spot behind one contract (v__VERSION__). Simulated ROS 2 drivers, real URDFs and meshes.</p>
 </header>
 <main class="layout">
   <section class="stage" aria-label="Work cell">
@@ -141,9 +141,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
         <button data-robot="auto" aria-pressed="true">Auto</button>
         <button data-robot="crx10ia" aria-pressed="false">FANUC CRX-10iA</button>
         <button data-robot="ur10e" aria-pressed="false">UR10e</button>
+        <button data-robot="spot" aria-pressed="false">Spot</button>
       </div>
       <label class="dir">Move part_1
-        <select id="dir"><option value="ab">Station A to B</option><option value="ba">Station B to A</option></select>
+        <select id="dir"><option value="station_a>station_b">Station A to B</option><option value="station_b>station_a">Station B to A</option><option value="station_a>station_c">Station A to C</option><option value="station_c>station_a">Station C to A</option></select>
       </label>
       <pre id="code" aria-label="Application call"></pre>
       <div class="row"><button id="run" class="primary">Run task</button><button id="reset" class="ghost">Reset cell</button></div>
@@ -155,6 +156,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
         <button data-scenario="pick"><b>Pick and place</b><span>Runs the task on the robot selected above.</span></button>
         <button data-scenario="switch"><b>Task switching</b><span>Same task on FANUC, then on UR. Only the robot argument changes.</span></button>
         <button data-scenario="failover"><b>Failure recovery</b><span>FANUC loses its link mid-approach; the platform fails over to UR.</span></button>
+        <button data-scenario="mobile"><b>Mobile transfer</b><span>Station C is out of both arms' reach; the allocator sends Spot.</span></button>
       </div>
     </section>
 

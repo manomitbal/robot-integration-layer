@@ -8,6 +8,7 @@ cls = lambda n: re.search(r"(  class " + n + r".*?\n  \}\n)", src["adapters"], r
 rows = [("Shared platform", len(code(src["contract"] + src["kinematics"] + src["platform"])), ""),
         ("Adapter SDK (ros2_control arms)", len(code(cls("Ros2ArmAdapter"))), ""),
         ("URAdapter", len(code(cls("URAdapter"))), "oem"), ("FanucAdapter", len(code(cls("FanucAdapter"))), "oem"),
+        ("SpotAdapter", len(code(cls("SpotAdapter"))), "oem"),
         ("Manifests + site profile (data)", len(code(src["manifests"])), ""),
         ("Simulated ROS 2 drivers", len(code(src["sim_ros2"])), ""), ("Operator UI", len(code(src["app"])), "")]
 mx = max(r[1] for r in rows)

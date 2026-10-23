@@ -26,9 +26,9 @@ RIL.Adapters = (() => {
       return { alive: true, ...n, oem: raw };
     }
 
-    async followJointTrajectory(points) {
-      const ctl = this.manifest.transport.trajectory_controller;
-      const res = await this.graph.sendGoal(ctl, points);
+    followJointTrajectory(points) { return this._goal(this.manifest.transport.trajectory_controller, points); }
+    async _goal(action, payload) {
+      const res = await this.graph.sendGoal(action, payload);
       if (res.code === 'SUCCEEDED') return { ok: true };
       if (res.code === 'CANCELED') return { ok: false, failure: 'CANCELED' };
       const h = this.health();                         // classify via status topic, not result code
@@ -90,5 +90,47 @@ RIL.Adapters = (() => {
     }
   }
 
-  return { Ros2ArmAdapter, URAdapter, FanucAdapter, byName: { URAdapter, FanucAdapter } };
+  // ---- Boston Dynamics Spot + Arm (spot_driver) -----------------------------
+  // Not ros2_control: arm moves go through the robot_command action, the body
+  // through the trajectory action, and every command needs the body lease.
+  class SpotAdapter extends Ros2ArmAdapter {
+    async connect() {
+      for (const srv of ['/claim', '/power_on', '/stand']) {
+        const r = await withTimeout(this.graph.call(srv, {}), 4000);
+        if (r.timeout || !r.success) return { ok: false, failed: srv };
+      }
+      return { ok: true };
+    }
+    normalizeStatus(s) {
+      if (s.estop !== 'STATE_NOT_ESTOPPED') return { state: C.RobotState.ESTOP, failure: 'ESTOP', detail: `status/estop=${s.estop}` };
+      const f = s.behavior_faults[0];
+      if (f && f.status === 'STATUS_CLEARABLE') return { state: C.RobotState.FAULTED, failure: 'PROTECTIVE_STOP', detail: `behavior_fault ${f.behavior_fault_id} ${f.cause}` };
+      if (f) return { state: C.RobotState.FAULTED, failure: 'OEM_INTERNAL', detail: `unclearable behavior_fault ${f.cause}` };
+      if (s.motor_power_state !== 'STATE_ON') return { state: C.RobotState.FAULTED, failure: 'OEM_INTERNAL', detail: 'motor power off' };
+      if (!s.lease_owner) return { state: C.RobotState.FAULTED, failure: 'OEM_INTERNAL', detail: 'body lease not held' };
+      return { state: C.RobotState.IDLE };
+    }
+    basePose() { return this.graph.readOdometry(); }
+    navigate(pose) {
+      const mob = this.manifest.mobility, b = this.basePose();
+      const dyaw = Math.abs(Math.atan2(Math.sin(pose.yaw - b.yaw), Math.cos(pose.yaw - b.yaw)));
+      const duration = Math.max(1, Math.hypot(pose.x - b.x, pose.y - b.y) / mob.max_speed_mps, dyaw / mob.max_yaw_rate) * 1.2;
+      return this._goal(this.manifest.transport.base_controller, { target_pose: pose, duration });
+    }
+    async setGripperIO(close) {
+      const io = this.manifest.tools[0].io;
+      const r = await this.graph.call(close ? io.close : io.open, {});
+      return { ok: r.success };
+    }
+    async recoverProtectiveStop() {
+      for (const f of (this.lastStatus && this.lastStatus.behavior_faults) || []) {
+        const r = await this.graph.call('/clear_behavior_fault', { id: f.behavior_fault_id });
+        if (!r.success) return { ok: false };
+      }
+      const st = await this.graph.call('/stand', {});
+      return { ok: st.success };
+    }
+  }
+
+  return { Ros2ArmAdapter, URAdapter, FanucAdapter, SpotAdapter, byName: { URAdapter, FanucAdapter, SpotAdapter } };
 })();

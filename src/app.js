@@ -16,12 +16,16 @@
   const world = new RIL.Platform.World(RIL.Site.world);
   const ril = new RIL.Platform.RIL({ world, parseXML });
   const graphs = {}, traceLines = [];
+  let traceQueued = false;   // declared before register(): adapter handshakes trace during boot
   const trace = (id) => (dir, line) => { traceLines.push({ t: Date.now(), id, dir, line }); renderTrace(); };
   Object.keys(RIL.Manifests).forEach(id => {
     const m = RIL.Manifests[id];
     const kin = new RIL.Kin.KinModel(parseXML(DATA[id].urdf), m.description.root_link);
-    const names = kin.chain(m.tool_frame.link).filter(j => j.type !== 'fixed').map(j => j.name);
-    graphs[id] = new RIL.SimRos2.SimRobotGraph({ ns: '/' + id, vendor: m.oem === 'FANUC' ? 'fanuc' : 'ur', jointNames: names, q0: m.home, onTrace: trace(id) });
+    const names = kin.chain(m.tool_frame.link).filter(j => j.type !== 'fixed').map(j => j.name), st = RIL.Site.robots[id];
+    graphs[id] = new RIL.SimRos2.SimRobotGraph({
+      ns: '/' + id, vendor: { FANUC: 'fanuc', 'Universal Robots': 'ur', 'Boston Dynamics': 'spot' }[m.oem], jointNames: names, q0: m.home,
+      base: { x: st.xyz[0], y: st.xyz[1], yaw: st.rpy[2] }, stand: m.mobility && m.mobility.stand, onTrace: trace(id),
+    });
     ril.register({ manifest: m, urdf: DATA[id].urdf, site: RIL.Site.robots[id], adapter: new RIL.Adapters.byName[m.adapter]({ manifest: m, graph: graphs[id] }) });
   });
 
@@ -34,16 +38,17 @@
   view.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 50);
-  camera.up.set(0, 0, 1); camera.position.set(0.1, -2.6, 1.7);
+  camera.up.set(0, 0, 1); camera.position.set(0.5, -2.9, 2.6);
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 0.3, 0.3); controls.enableDamping = true; controls.update();
+  controls.target.set(0.55, 1.0, 0.2); controls.enableDamping = true; controls.update();
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8a9096, 0.85));
   const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(1.5, -2, 3); scene.add(sun);
   const fill = new THREE.DirectionalLight(0xffffff, 0.25); fill.position.set(-2, 2, 1.5); scene.add(fill);
 
-  const table = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.4, 0.04), new THREE.MeshStandardMaterial({ color: 0x9aa3a8, roughness: 0.9 }));
-  table.position.set(0, 0.3, -0.02); scene.add(table);
-  const grid = new THREE.GridHelper(2.0, 20, 0x7b858b, 0x8c959a); grid.rotation.x = Math.PI / 2; grid.position.set(0, 0.3, 0.001); scene.add(grid);
+  // Cell floor: sized to include the mobile robot's dock and station_c.
+  const table = new THREE.Mesh(new THREE.BoxGeometry(4.0, 4.0, 0.04), new THREE.MeshStandardMaterial({ color: 0x9aa3a8, roughness: 0.9 }));
+  table.position.set(0.5, 1.0, -0.02); scene.add(table);
+  const grid = new THREE.GridHelper(4.0, 40, 0x7b858b, 0x8c959a); grid.rotation.x = Math.PI / 2; grid.position.set(0.5, 1.0, 0.001); scene.add(grid);
   Object.entries(world.stations).forEach(([k, p]) => {
     const pad = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.004), new THREE.MeshStandardMaterial({ color: 0x3c4a57, roughness: 0.7 }));
     pad.position.set(p[0], p[1], 0.002); scene.add(pad);
@@ -75,14 +80,19 @@
       });
       scene.add(grp); links[L.name] = grp;
     });
-    // generic parallel gripper, oriented by the manifest's approach axis
-    const tf = r.manifest.tool_frame, grip = new THREE.Group();
-    grip.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...tf.approach));
-    const dark = new THREE.MeshStandardMaterial({ color: 0x2b3238, roughness: 0.6 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.045, 0.08), dark); body.position.z = 0.04; grip.add(body);
-    const fingers = [-1, 1].map(s => { const f = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.03, 0.075), dark); f.position.set(s * 0.045, 0, 0.1175); grip.add(f); return f; });
-    links[tf.link].add(grip);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.17, 0.2, 48), new THREE.MeshBasicMaterial({ color: 0x2e7d4f, transparent: true, opacity: 0.85 }));
+    // generic parallel gripper, oriented by the manifest's approach axis (the claw is in the URDF meshes)
+    const tf = r.manifest.tool_frame;
+    let fingers = [];
+    if (r.manifest.tools[0].type === 'parallel_gripper') {
+      const grip = new THREE.Group();
+      grip.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...tf.approach));
+      const dark = new THREE.MeshStandardMaterial({ color: 0x2b3238, roughness: 0.6 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.045, 0.08), dark); body.position.z = 0.04; grip.add(body);
+      fingers = [-1, 1].map(s => { const f = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.03, 0.075), dark); f.position.set(s * 0.045, 0, 0.1175); grip.add(f); return f; });
+      links[tf.link].add(grip);
+    }
+    const rr = r.manifest.mobility ? [0.62, 0.66] : [0.17, 0.2];
+    const ring = new THREE.Mesh(new THREE.RingGeometry(rr[0], rr[1], 64), new THREE.MeshBasicMaterial({ color: 0x2e7d4f, transparent: true, opacity: 0.85 }));
     ring.position.set(...RIL.Site.robots[r.id].xyz); ring.position.z = 0.003; scene.add(ring);
     robots3d[r.id] = { links, fingers, ring };
   });
@@ -94,7 +104,7 @@
     const d = el('div', 'tag'); d.append(el('span', 'tag-name', r.manifest.display), el('span', 'pill', ''));
     labelLayer.append(d); labels[r.id] = d;
   });
-  Object.keys(world.stations).forEach(k => { const d = el('div', 'tag station', k === 'station_a' ? 'Station A' : 'Station B'); labelLayer.append(d); labels[k] = d; });
+  Object.keys(world.stations).forEach(k => { const d = el('div', 'tag station', 'Station ' + k.slice(-1).toUpperCase()); labelLayer.append(d); labels[k] = d; });
   function place(div, p) {
     const v = new THREE.Vector3(...p).project(camera), w = view.clientWidth, h = view.clientHeight;
     div.style.transform = `translate(-50%,-100%) translate(${(v.x + 1) / 2 * w}px, ${(1 - v.y) / 2 * h}px)`;
@@ -106,16 +116,17 @@
     const w = view.clientWidth, h = view.clientHeight;
     if (renderer.domElement.width !== Math.floor(w * renderer.getPixelRatio())) { renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
     Object.values(ril.robots).forEach(r => {
-      const T = r.kin.fk(graphs[r.id].readJointStates(), r.baseT), R3 = robots3d[r.id];
+      const bT = ril.baseT(r.id), T = r.kin.fk(graphs[r.id].readJointStates(), bT), R3 = robots3d[r.id];
       Object.entries(R3.links).forEach(([n, g]) => { if (T[n]) { g.matrix.copy(m4(T[n])); g.matrixWorldNeedsUpdate = true; } });
       const io = graphs[r.id].ioOut; const closed = !!(io[1] || io[0]);
       R3.fingers.forEach((f, i) => { const tgt = (i ? 1 : -1) * (closed ? 0.031 : 0.045); f.position.x += (tgt - f.position.x) * 0.25; });
       R3.ring.material.color.setHex(ringColor[STATE_CLASS[r.state]] || ringColor.muted);
-      const base = RIL.Site.robots[r.id].xyz; place(labels[r.id], [base[0], base[1] - 0.25, 1.05]);
+      R3.ring.position.x = bT[3]; R3.ring.position.y = bT[7];
+      place(labels[r.id], [bT[3], bT[7] - 0.25, 1.05]);
     });
     const o = world.objects.part_1;
     if (o.heldBy) {
-      const r = ril.robots[o.heldBy], T = r.kin.fk(graphs[r.id].readJointStates(), r.baseT)[r.manifest.tool_frame.link];
+      const r = ril.robots[o.heldBy], T = r.kin.fk(graphs[r.id].readJointStates(), ril.baseT(r.id))[r.manifest.tool_frame.link];
       part.position.set(...RIL.Kin.apply(T, r.manifest.tool_frame.offset));
     } else part.position.set(...o.pos);
     Object.entries(world.stations).forEach(([k, p]) => place(labels[k], [p[0], p[1] + 0.12, 0.02]));
@@ -124,8 +135,10 @@
   }
 
   // ---- UI state ------------------------------------------------------------
-  let selected = 'auto', direction = 'ab', activeTask = null, scenarioBusy = false;
-  const taskSpec = () => direction === 'ab' ? { ...TASK } : { ...TASK, from: 'station_b', to: 'station_a' };
+  // direction is a '#dir' option value: "<from>><to>"
+  let selected = 'auto', direction = 'station_a>station_b', activeTask = null, scenarioBusy = false;
+  const taskSpec = () => { const [from, to] = direction.split('>'); return { ...TASK, from, to }; };
+  const setDir = (v) => { direction = v; $('#dir').value = v; renderCode(); };
 
   function renderCode() {
     const s = taskSpec();
@@ -134,12 +147,14 @@
   document.querySelectorAll('[data-robot]').forEach(b => b.addEventListener('click', () => {
     selected = b.dataset.robot; document.querySelectorAll('[data-robot]').forEach(x => x.setAttribute('aria-pressed', x === b)); renderCode();
   }));
-  $('#dir').addEventListener('change', e => { direction = e.target.value; renderCode(); });
+  $('#dir').addEventListener('change', e => setDir(e.target.value));
 
   function syncDirectionToPart() {
     const o = world.objects.part_1; if (o.heldBy) return;
-    const atA = Math.hypot(o.pos[0] - world.stations.station_a[0], o.pos[1] - world.stations.station_a[1]) < 0.01;
-    direction = atA ? 'ab' : 'ba'; $('#dir').value = direction; renderCode();
+    const at = Object.keys(world.stations).find(k => Math.hypot(o.pos[0] - world.stations[k][0], o.pos[1] - world.stations[k][1]) < 0.01);
+    if (!at || direction.startsWith(at + '>')) return;
+    const opt = [...$('#dir').options].find(x => x.value.startsWith(at + '>'));
+    if (opt) setDir(opt.value);
   }
 
   async function runTask(robot) {
@@ -183,6 +198,14 @@
       say(`FANUC link lost. The platform waits ${RIL.Platform.LIVENESS_TIMEOUT_MS / 1000} s for heartbeat before declaring it offline, then checks the cell is clear and fails over.`);
       const t = await p;
       say(t.state === 'SUCCEEDED' ? `Recovered: ${t.id} completed on ${t.robot} after failover from crx10ia. Restore the FANUC link from its card.` : `${t.id} ended ${t.state}.`);
+    },
+    async mobile() {
+      resetCell(); await sleep(300);
+      setSel('auto'); setDir('station_a>station_c');
+      const why = ['crx10ia', 'ur10e'].map(id => { const p = ril.plan(id, taskSpec()); return p.ok ? `${id} ok` : `${id} ${p.failure}`; }).join(', ');
+      say(`Station C is outside both arms' workspace (${why}). Same call with robot: 'auto' — the allocator picks the only capable robot.`);
+      const t = await runTask('auto');
+      say(t.state === 'SUCCEEDED' ? `${t.id} completed on ${t.robot}: walked to A, picked, carried the part to C, and returned to its dock.` : `${t.id} ended ${t.state}.`);
     },
   };
   function setSel(id) { selected = id; document.querySelectorAll('[data-robot]').forEach(x => x.setAttribute('aria-pressed', x.dataset.robot === id)); renderCode(); }
@@ -256,7 +279,6 @@
     const ul = $('#events'); ul.prepend(li); while (ul.children.length > 200) ul.lastChild.remove();
     renderAll();
   });
-  let traceQueued = false;
   function renderTrace() {
     if (traceQueued) return; traceQueued = true;
     requestAnimationFrame(() => {
